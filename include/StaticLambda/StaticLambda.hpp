@@ -14,6 +14,7 @@ struct _StaticLambda_MemBase
 	std::atomic<intptr_t> called;
 #endif // !NDEBUG
 	size_t allocated_size;
+	void* near_target;
 };
 
 template <typename T>
@@ -80,6 +81,7 @@ struct StaticLambda
 		auto mem = (mem_t*)_StaticLambda_Alloc(sizeof(mem_t), (void*)near_target);
 
 		mem->allocated_size = sizeof(mem_t);
+		mem->near_target = (void*)near_target;
 
 		auto code_size = uintptr_t(&mem->Call) - uintptr_t(&mem->CallProxy);
 		memcpy(mem->code, &mem->CallProxy, code_size);
