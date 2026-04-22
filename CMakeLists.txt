@@ -18,6 +18,7 @@ target_include_directories(StaticLambda
 )
 
 target_compile_features(StaticLambda PRIVATE cxx_std_23)
+set_target_properties(StaticLambda PROPERTIES CXX_SCAN_FOR_MODULES OFF)
 
 if(STATIC_LAMBDA_EXAMPLE)
 	add_executable(StaticLambdaExample)
