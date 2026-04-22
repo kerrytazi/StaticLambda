@@ -8,11 +8,13 @@ add_library(StaticLambda)
 target_sources(StaticLambda
 	PRIVATE
 		src/StaticLambda.cpp
+
+		include/StaticLambda/StaticLambda.hpp
+)
+
+target_include_directories(StaticLambda
 	PUBLIC
-		FILE_SET HEADERS
-		BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
-		FILES
-			include/StaticLambda/StaticLambda.hpp
+		${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_compile_features(StaticLambda PRIVATE cxx_std_23)

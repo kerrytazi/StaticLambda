@@ -14,7 +14,7 @@ void example1()
 	// Raw pointer
 	int(*static_func)(int, int) = sl.GetTarget();
 
-	std::println("example1: result = {}", static_func(2, 3)); // 2 + 3 + 7 = 12
+	std::println("example1: result = {}, expected = 12", static_func(2, 3)); // 2 + 3 + 7 = 12
 }
 
 void example2()
@@ -30,7 +30,7 @@ void example2()
 	int(*static_func)(int, int) = opt_sl->GetTarget();
 	auto result = static_func(2, 3); // 2 + 3 + 7 = 12
 
-	std::println("example2: result = {}", result);
+	std::println("example2: result = {}, expected = 12", result);
 }
 
 int main()
