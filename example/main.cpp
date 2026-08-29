@@ -37,4 +37,6 @@ int main()
 {
 	example1();
 	example2();
+
+	return 0;
 }

@@ -1,6 +1,16 @@
 #include "StaticLambda/StaticLambda.hpp"
 
-#ifndef NDEBUG
+static size_t align_up_to_page(size_t size)
+{
+	return (size + 4095) & ~4095;
+}
+
+static void* align_down_to_page(void* val)
+{
+	return (void*)(uintptr_t(val) & ~uintptr_t(0x1000 - 1));
+}
+
+#if !defined(NDEBUG)
 #include <vector>
 #include <mutex>
 static std::mutex g_mtx;
@@ -29,9 +39,9 @@ static void _StaticLambda_CleanDebugMem()
 		}
 	}
 }
-#endif // !NDEBUG
+#endif // !defined(NDEBUG)
 
-#ifdef _WIN32
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -105,18 +115,21 @@ static void _StaticLambda_Free(_StaticLambda_MemBase* mem)
 
 static _StaticLambda_MemBase* _StaticLambda_TryAllocAt(void* target, size_t size)
 {
-	void* result = target;
+	void* result = align_down_to_page(target);
 	NTSTATUS status = NtAllocateVirtualMemory(HANDLE(-1), &result, 0, &size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 
 	if (NT_SUCCESS(status))
+	{
+		((_StaticLambda_MemBase*)result)->allocated_size = size;
 		return (_StaticLambda_MemBase*)result;
+	}
 
 	return nullptr;
 }
 
 static _StaticLambda_MemBase* TryAlloc2gbUpSegmented(void* near_target, size_t size)
 {
-	uintptr_t target = uintptr_t(near_target) & ~uintptr_t(0x1000 - 1);
+	uintptr_t target = uintptr_t(near_target);
 
 	uintptr_t gb2 = uintptr_t(2) * 1024 * 1024 * 1024;
 
@@ -147,7 +160,7 @@ static _StaticLambda_MemBase* TryAlloc2gbUpSegmented(void* near_target, size_t s
 
 static _StaticLambda_MemBase* TryAlloc2gbDownSegmented(void* near_target, size_t size)
 {
-	uintptr_t target = (uintptr_t(near_target) - size) & ~uintptr_t(0x1000 - 1);
+	uintptr_t target = uintptr_t(near_target) - 4096;
 
 	uintptr_t gb2 = uintptr_t(2) * 1024 * 1024 * 1024;
 
@@ -175,12 +188,43 @@ static _StaticLambda_MemBase* TryAlloc2gbDownSegmented(void* near_target, size_t
 
 	return nullptr;
 }
+#else
+#include <sys/mman.h>
+
+static void _StaticLambda_Free(_StaticLambda_MemBase* mem)
+{
+	if (munmap(mem, mem->allocated_size) == -1)
+		throw 1;
+}
+
+static _StaticLambda_MemBase* _StaticLambda_TryAllocAt(void* target, size_t size)
+{
+	// Must be aligned for mmap
+	size = align_up_to_page(size);
+
+	int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+
+	if (target)
+		flags |= MAP_FIXED_NOREPLACE;
+
+	void* aligned_target = align_down_to_page(target);
+
+	void* result = mmap(aligned_target, size, PROT_READ | PROT_WRITE | PROT_EXEC, flags, -1, 0);
+
+	if (result == MAP_FAILED)
+		return nullptr;
+
+	((_StaticLambda_MemBase*)result)->allocated_size = size;
+	return (_StaticLambda_MemBase*)result;
+}
+
+#endif // defined(_WIN32)
 
 static _StaticLambda_MemBase* TryAlloc2gbUpStepped(void* near_target, size_t size, size_t step)
 {
-	uintptr_t target = uintptr_t(near_target) & ~uintptr_t(0x1000 - 1);
+	uintptr_t target = uintptr_t(near_target);
 
-	uintptr_t gb2 = uintptr_t(2) * 1024 * 1024 * 1024;
+	const uintptr_t gb2 = uintptr_t(2) * 1024 * 1024 * 1024;
 
 	while (target > uintptr_t(near_target) - gb2 + 4096)
 	{
@@ -195,9 +239,9 @@ static _StaticLambda_MemBase* TryAlloc2gbUpStepped(void* near_target, size_t siz
 
 static _StaticLambda_MemBase* TryAlloc2gbDownStepped(void* near_target, size_t size, size_t step)
 {
-	uintptr_t target = uintptr_t(near_target) & ~uintptr_t(0x1000 - 1);
+	uintptr_t target = uintptr_t(near_target);
 
-	uintptr_t gb2 = uintptr_t(2) * 1024 * 1024 * 1024;
+	const uintptr_t gb2 = uintptr_t(2) * 1024 * 1024 * 1024;
 
 	while (target > uintptr_t(near_target) - gb2 + 4096)
 	{
@@ -209,22 +253,23 @@ static _StaticLambda_MemBase* TryAlloc2gbDownStepped(void* near_target, size_t s
 
 	return nullptr;
 }
-#endif // _WIN32
 
 _StaticLambda_MemBase* _StaticLambda_Alloc(size_t size, void* near_target)
 {
-#ifndef NDEBUG
+#if !defined(NDEBUG)
 	_StaticLambda_CleanDebugMem();
-#endif // !NDEBUG
+#endif // !defined(NDEBUG)
 
 	if (!near_target)
 		return _StaticLambda_TryAllocAt(nullptr, size);
 
+#if defined(_WIN32)
 	if (auto result = TryAlloc2gbUpSegmented(near_target, size))
 		return result;
 
 	if (auto result = TryAlloc2gbDownSegmented(near_target, size))
 		return result;
+#endif // defined(_WIN32)
 
 	if (auto result = TryAlloc2gbUpStepped(near_target, size, 0x10000))
 		return result;
@@ -239,14 +284,14 @@ void _StaticLambda_Destroy(_StaticLambda_MemBase* mem)
 {
 	mem->destroy(mem);
 
-#ifndef NDEBUG
+#if !defined(NDEBUG)
 	if (mem->called > 0)
 	{
 		std::unique_lock lck(g_mtx);
 		g_to_free.push_back(mem);
 		return;
 	}
-#endif // !NDEBUG
+#endif // !defined(NDEBUG)
 
 	_StaticLambda_Free(mem);
 }

@@ -5,14 +5,21 @@
 #include <cstddef>
 #include <memory>
 #include <atomic>
+#include <cstring>
+
+#if defined(_WIN32)
+#define SL_NOINLINE __declspec(noinline)
+#else
+#define SL_NOINLINE __attribute__((noinline))
+#endif // _WIN32
 
 struct _StaticLambda_MemBase
 {
 	char code[256];
 	void(*destroy)(_StaticLambda_MemBase* _mem);
-#ifndef NDEBUG
+#if !defined(NDEBUG)
 	std::atomic<intptr_t> called;
-#endif // !NDEBUG
+#endif // !defined(NDEBUG)
 	size_t allocated_size;
 	void* near_target;
 };
@@ -22,7 +29,6 @@ struct _StaticLambda_tag_type {};
 
 _StaticLambda_MemBase* _StaticLambda_Alloc(size_t size, void* near_target);
 void _StaticLambda_Destroy(_StaticLambda_MemBase* mem);
-
 
 static constexpr uintptr_t _StaticLambda_TAG = 0x0123456789abcdef;
 
@@ -40,6 +46,8 @@ struct _StaticLambda_FuncUtils<TRet(TArgs...)>
 		TLambda lambda;
 		TRet (*call)(Mem* mem, TArgs... args);
 
+		static int DummyFunc() { return 42; }
+
 		static TRet CallProxy(TArgs... args)
 		{
 			volatile auto mem = reinterpret_cast<Mem*>(_StaticLambda_TAG);
@@ -55,7 +63,7 @@ struct _StaticLambda_FuncUtils<TRet(TArgs...)>
 #endif // !NDEBUG
 		};
 
-		__declspec(noinline)
+		SL_NOINLINE
 		static TRet Call(Mem* mem, TArgs... args)
 		{
 			DebugCalledCounterExit e(mem);
@@ -73,24 +81,27 @@ struct StaticLambda
 {
 	_StaticLambda_MemBase* _mem = nullptr;
 
-
 	template <typename TLambda, typename TNearTarget = std::nullptr_t, typename TMemBase = _StaticLambda_MemBase>
 	explicit StaticLambda(TLambda&& lambda, TNearTarget near_target = nullptr, _StaticLambda_tag_type<TMemBase> = _StaticLambda_tag_type<TMemBase>{})
 	{
 		using mem_t = _StaticLambda_FuncUtils<TSignature>::template Mem<TLambda, TMemBase>;
 		auto mem = (mem_t*)_StaticLambda_Alloc(sizeof(mem_t), (void*)near_target);
 
-		mem->allocated_size = sizeof(mem_t);
 		mem->near_target = (void*)near_target;
 
-		auto code_size = uintptr_t(&mem->Call) - uintptr_t(&mem->CallProxy);
-		memcpy(mem->code, &mem->CallProxy, code_size);
+		auto code_size = intptr_t(&mem->Call) - intptr_t(&mem->CallProxy);
+
+		// Some compilers reorder functions
+		if (code_size < 0)
+			code_size = intptr_t(&mem->DummyFunc) - intptr_t(&mem->CallProxy);
+
+		std::memcpy(mem->code, (void*)&mem->CallProxy, code_size);
 
 		for (size_t i = 0; i < code_size; ++i)
 		{
 			if (memcmp(&mem->code[i], &_StaticLambda_TAG, sizeof(_StaticLambda_TAG)) == 0)
 			{
-				memcpy(&mem->code[i], &mem, sizeof(&mem));
+				std::memcpy(&mem->code[i], &mem, sizeof(void*));
 				break;
 			}
 		}
